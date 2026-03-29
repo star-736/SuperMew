@@ -289,12 +289,25 @@ async def upload_document(file: UploadFile = File(...), _: User = Depends(requir
 
     task_id = task_manager.create_task(filename)
 
+    MAX_RETRIES = 3
+    RETRY_DELAY = 5
+
     async def run_background():
-        try:
-            result = await asyncio.to_thread(_process_document_upload, file_path, filename, task_id)
-            task_manager.complete_task(task_id, result)
-        except Exception as e:
-            task_manager.fail_task(task_id, str(e))
+        last_error = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                if attempt > 1:
+                    task_manager.update_progress(task_id, 0, f"重试第 {attempt} 次...")
+                    await asyncio.sleep(RETRY_DELAY)
+                result = await asyncio.to_thread(_process_document_upload, file_path, filename, task_id)
+                task_manager.complete_task(task_id, result)
+                return
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    task_manager.update_progress(task_id, 0, f"第 {attempt} 次失败，{RETRY_DELAY}秒后重试...")
+                else:
+                    task_manager.fail_task(task_id, str(last_error))
 
     asyncio.create_task(run_background())
 
