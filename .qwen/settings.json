@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout *)",
+      "WebFetch(mcpservers.org)"
+    ]
+  },
+  "$version": 3
+}
