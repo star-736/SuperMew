@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -15,6 +16,7 @@ from milvus_client import MilvusManager
 from milvus_writer import MilvusWriter
 from models import User
 from parent_chunk_store import ParentChunkStore
+from task import task_manager
 from schemas import (
     AuthResponse,
     ChatRequest,
@@ -31,11 +33,14 @@ from schemas import (
     SessionInfo,
     SessionListResponse,
     SessionMessagesResponse,
+    UploadTaskCreateResponse,
+    UploadTaskStatus,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR.parent / "data"
 UPLOAD_DIR = DATA_DIR / "documents"
+MAX_FILE_SIZE = 50 * 1024 * 1024
 
 loader = DocumentLoader()
 parent_chunk_store = ParentChunkStore()
@@ -203,67 +208,118 @@ async def list_documents(_: User = Depends(require_admin)):
         raise HTTPException(status_code=500, detail=f"获取文档列表失败: {str(e)}")
 
 
-@router.post("/documents/upload", response_model=DocumentUploadResponse)
-async def upload_document(file: UploadFile = File(...), _: User = Depends(require_admin)):
-    """上传文档并进行 embedding（管理员）"""
+def _process_document_upload(file_path: str, filename: str, task_id: str):
+    """实际的文件上传处理逻辑（在后台线程中执行）"""
+    task_manager.update_progress(task_id, 10, "初始化向量数据库...")
+
+    milvus_manager.init_collection()
+
+    task_manager.update_progress(task_id, 15, "清理旧数据...")
+    delete_expr = f'filename == "{filename}"'
     try:
-        filename = file.filename or ""
-        file_lower = filename.lower()
-        if not filename:
-            raise HTTPException(status_code=400, detail="文件名不能为空")
-        if not (
-            file_lower.endswith(".pdf")
-            or file_lower.endswith((".docx", ".doc"))
-            or file_lower.endswith((".xlsx", ".xls"))
-        ):
-            raise HTTPException(status_code=400, detail="仅支持 PDF、Word 和 Excel 文档")
+        milvus_manager.delete(delete_expr)
+    except Exception:
+        pass
+    try:
+        parent_chunk_store.delete_by_filename(filename)
+    except Exception:
+        pass
 
-        os.makedirs(UPLOAD_DIR, exist_ok=True)
-        milvus_manager.init_collection()
+    task_manager.update_progress(task_id, 25, "加载文档并分块...")
+    try:
+        new_docs = loader.load_document(file_path, filename)
+    except Exception as doc_err:
+        raise Exception(f"文档处理失败: {doc_err}")
 
-        delete_expr = f'filename == "{filename}"'
+    if not new_docs:
+        raise Exception("文档处理失败，未能提取内容")
+
+    task_manager.update_progress(task_id, 50, "文档分块完成，准备向量化...")
+    parent_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) in (1, 2)]
+    leaf_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) == 3]
+    if not leaf_docs:
+        raise Exception("文档处理失败，未生成可检索叶子分块")
+
+    task_manager.update_progress(task_id, 60, "存储父级分块...")
+    parent_chunk_store.upsert_documents(parent_docs)
+
+    task_manager.update_progress(task_id, 70, "正在生成向量并写入数据库...")
+    milvus_writer.write_documents(leaf_docs)
+
+    task_manager.update_progress(task_id, 95, "清理临时文件...")
+    try:
+        os.remove(file_path)
+    except Exception:
+        pass
+
+    return {
+        "filename": filename,
+        "chunks_processed": len(leaf_docs),
+        "message": (
+            f"成功上传并处理 {filename}，叶子分块 {len(leaf_docs)} 个，"
+            f"父级分块 {len(parent_docs)} 个"
+        ),
+    }
+
+
+@router.post("/documents/upload", response_model=UploadTaskCreateResponse)
+async def upload_document(file: UploadFile = File(...), _: User = Depends(require_admin)):
+    """上传文档（异步处理，立即返回 task_id）"""
+    filename = file.filename or ""
+    file_lower = filename.lower()
+    if not filename:
+        raise HTTPException(status_code=400, detail="文件名不能为空")
+    if not re.match(r'^[\w\-. ]+$', filename):
+        raise HTTPException(status_code=400, detail="文件名包含非法字符")
+    if not (
+        file_lower.endswith(".pdf")
+        or file_lower.endswith((".docx", ".doc"))
+        or file_lower.endswith((".xlsx", ".xls"))
+    ):
+        raise HTTPException(status_code=400, detail="仅支持 PDF、Word 和 Excel 文档")
+
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail=f"文件大小超过限制（最大 {MAX_FILE_SIZE // 1024 // 1024}MB）")
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    file_path = str(UPLOAD_DIR / filename)
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    task_id = task_manager.create_task(filename)
+
+    async def run_background():
         try:
-            milvus_manager.delete(delete_expr)
-        except Exception:
-            pass
-        try:
-            parent_chunk_store.delete_by_filename(filename)
-        except Exception:
-            pass
+            result = await asyncio.to_thread(_process_document_upload, file_path, filename, task_id)
+            task_manager.complete_task(task_id, result)
+        except Exception as e:
+            task_manager.fail_task(task_id, str(e))
 
-        file_path = UPLOAD_DIR / filename
-        with open(file_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+    asyncio.create_task(run_background())
 
-        try:
-            new_docs = loader.load_document(str(file_path), filename)
-        except Exception as doc_err:
-            raise HTTPException(status_code=500, detail=f"文档处理失败: {doc_err}")
+    return UploadTaskCreateResponse(
+        task_id=task_id,
+        filename=filename,
+        message="文件已接收，正在后台处理",
+    )
 
-        if not new_docs:
-            raise HTTPException(status_code=500, detail="文档处理失败，未能提取内容")
 
-        parent_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) in (1, 2)]
-        leaf_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) == 3]
-        if not leaf_docs:
-            raise HTTPException(status_code=500, detail="文档处理失败，未生成可检索叶子分块")
-
-        parent_chunk_store.upsert_documents(parent_docs)
-        milvus_writer.write_documents(leaf_docs)
-
-        return DocumentUploadResponse(
-            filename=filename,
-            chunks_processed=len(leaf_docs),
-            message=(
-                f"成功上传并处理 {filename}，叶子分块 {len(leaf_docs)} 个，"
-                f"父级分块 {len(parent_docs)} 个（存入 PostgreSQL）"
-            ),
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"文档上传失败: {str(e)}")
+@router.get("/documents/tasks/{task_id}", response_model=UploadTaskStatus)
+async def get_upload_task_status(task_id: str, _: User = Depends(require_admin)):
+    """查询上传任务状态"""
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在或已过期")
+    return UploadTaskStatus(
+        task_id=task["task_id"],
+        filename=task["filename"],
+        status=task["status"],
+        progress=task.get("progress", 0),
+        message=task.get("message", ""),
+        result=task.get("result"),
+        error=task.get("error"),
+    )
 
 
 @router.delete("/documents/{filename}", response_model=DocumentDeleteResponse)

@@ -17,6 +17,7 @@ createApp({
             selectedFile: null,
             isUploading: false,
             uploadProgress: '',
+            currentTaskId: null,
             token: localStorage.getItem('accessToken') || '',
             currentUser: null,
             authMode: 'login',
@@ -448,23 +449,51 @@ createApp({
                 }
 
                 const data = await response.json();
-                this.uploadProgress = data.message;
+                this.currentTaskId = data.task_id;
+                this.uploadProgress = data.message + ' 0%';
 
-                this.selectedFile = null;
-                if (this.$refs.fileInput) {
-                    this.$refs.fileInput.value = '';
-                }
-
-                await this.loadDocuments();
-
-                setTimeout(() => {
-                    this.uploadProgress = '';
-                }, 3000);
+                this.pollUploadTask();
 
             } catch (error) {
                 this.uploadProgress = '上传失败：' + error.message;
-            } finally {
                 this.isUploading = false;
+            }
+        },
+
+        async pollUploadTask() {
+            if (!this.currentTaskId) return;
+
+            try {
+                const response = await this.authFetch(`/documents/tasks/${this.currentTaskId}`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch task status');
+                }
+
+                const task = await response.json();
+                this.uploadProgress = task.message + ' ' + task.progress + '%';
+
+                if (task.status === 'completed') {
+                    this.uploadProgress = task.result?.message || '处理完成';
+                    this.selectedFile = null;
+                    if (this.$refs.fileInput) {
+                        this.$refs.fileInput.value = '';
+                    }
+                    await this.loadDocuments();
+                    setTimeout(() => {
+                        this.uploadProgress = '';
+                    }, 3000);
+                    this.currentTaskId = null;
+                    this.isUploading = false;
+                } else if (task.status === 'failed') {
+                    this.uploadProgress = '处理失败：' + (task.error || task.message);
+                    this.currentTaskId = null;
+                    this.isUploading = false;
+                } else {
+                    setTimeout(() => this.pollUploadTask(), 1000);
+                }
+            } catch (error) {
+                console.error('Poll task error:', error);
+                setTimeout(() => this.pollUploadTask(), 2000);
             }
         },
 

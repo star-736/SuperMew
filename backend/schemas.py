@@ -125,3 +125,19 @@ class DocumentDeleteResponse(BaseModel):
     filename: str
     chunks_deleted: int
     message: str
+
+
+class UploadTaskCreateResponse(BaseModel):
+    task_id: str
+    filename: str
+    message: str
+
+
+class UploadTaskStatus(BaseModel):
+    task_id: str
+    filename: str
+    status: str
+    progress: int
+    message: str
+    result: Optional[dict] = None
+    error: Optional[str] = None
