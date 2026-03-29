@@ -2,10 +2,10 @@ version: '3.5'
 
 services:
   postgres:
-    container_name: supermew-postgres
+    container_name: starrag-postgres
     image: postgres:15
     environment:
-      POSTGRES_DB: langchain_app
+      POSTGRES_DB: starrag
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
@@ -13,13 +13,13 @@ services:
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d langchain_app"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d starrag"]
       interval: 10s
       timeout: 5s
       retries: 10
 
   redis:
-    container_name: supermew-redis
+    container_name: starrag-redis
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
