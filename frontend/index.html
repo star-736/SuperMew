@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>喵喵智能助手</title>
+    <title>Star RAG</title>
     <link rel="stylesheet" href="style.css">
     <!-- Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&family=Zcool+KuaiLe&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=SF+Mono&family=Consolas&family=Monaco&display=swap" rel="stylesheet">
     <!-- Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Markdown Parser -->
@@ -23,8 +23,12 @@
         <!-- Sidebar -->
         <aside class="sidebar">
             <div class="sidebar-header">
-                <div class="logo-icon">🐱</div>
-                <h2>喵喵助手</h2>
+                <div class="logo-icon">
+                    <svg viewBox="0 0 1024 1024" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M452.86592 236.384l5.44-4.8a55.52 55.52 0 0 0 17.856-60.608 56.192 56.192 0 0 0-49.824-39.232l-97.92-6.656-36.576-91.072C283.55392 13.312 263.04192 0 239.39392 0c-23.616 0-44.16 13.376-52.288 33.92L150.52992 125.12l-98.304 6.624a55.68 55.68 0 0 0-49.28 38.624 56.288 56.288 0 0 0 17.376 61.184l75.328 62.912-24.096 95.552a56.8 56.8 0 0 0 21.376 59.2c18.08 13.28 42.528 15.04 63.456 2.304l83.072-52.352 83.456 52.48c19.136 11.872 46.08 10.304 62.496-2.08a56 56 0 0 0 20.8-28.32c166.976 167.84 253.632 523.04 254.592 527.04a32 32 0 0 0 55.104 13.792c25.568-28.896 40.128-77.344 48.416-120.576l110.624 168.096a32 32 0 0 0 58.464-13.44c12.352-94.72 4.8-178.336-5.696-237.92l44.576 34.944a32 32 0 0 0 50.784-32.96c-4.096-16.32-102.304-387.36-570.208-523.84z m441.152 414.08a32 32 0 0 0-49.792 36.16c0.384 1.056 31.104 86.624 31.552 207.808l-106.144-161.248a32.032 32.032 0 0 0-58.72 16.288 571.68 571.68 0 0 1-12.704 95.488c-45.248-145.856-152.64-429.664-327.872-533.12a32 32 0 0 0-46.176 38.944l13.056 34.24-80.736-50.752a32.032 32.032 0 0 0-34.112 0L138.27392 387.296l24.384-96.672a32.032 32.032 0 0 0-10.528-32.416L75.55392 194.304l99.328-6.72a31.936 31.936 0 0 0 27.52-20l37.056-92.256L276.51392 167.584c4.576 11.392 15.264 19.168 27.52 20l99.808 6.752-38.24 33.824a32 32 0 0 0 13.92 55.136C464.19392 275.264 614.27392 463.488 679.71392 584.512l-21.664-16.96z"/>
+                    </svg>
+                </div>
+                <h2>STAR RAG</h2>
             </div>
             <nav class="sidebar-nav">
                 <button @click="handleNewChat" :class="['nav-btn', {active: activeNav === 'newChat'}]">
@@ -54,7 +58,7 @@
         <!-- Main Chat Area -->
         <main class="main-content">
             <div v-if="!isAuthenticated" class="auth-panel">
-                <h2>{{ authMode === 'login' ? '登录 SuperMew' : '注册 SuperMew' }}</h2>
+                <h2>{{ authMode === 'login' ? '登录 Star RAG' : '注册 Star RAG' }}</h2>
                 <p>登录后即可使用聊天和历史记录；管理员可管理文档知识库。</p>
                 <div class="auth-form">
                     <input v-model="authForm.username" type="text" placeholder="用户名" />
@@ -193,7 +197,7 @@
                 <header class="chat-header">
                     <div class="header-info">
                         <div class="status-dot"></div>
-                        <span>喵喵在线中...</span>
+                        <span>STAR RAG 在线</span>
                     </div>
                     <div class="header-actions">
                         <button class="icon-btn" title="更多"><i class="fas fa-ellipsis-h"></i></button>
@@ -202,9 +206,13 @@
 
                 <div class="chat-container" ref="chatContainer">
                 <div v-if="messages.length === 0" class="welcome-screen">
-                    <div class="big-avatar">🐱</div>
-                    <h3>你好呀！我是喵喵</h3>
-                    <p>我可以帮你写代码、回答问题，或者只是陪你聊天~ 喵！</p>
+                    <div class="big-avatar">
+                        <svg viewBox="0 0 1024 1024" width="80" height="80" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M452.86592 236.384l5.44-4.8a55.52 55.52 0 0 0 17.856-60.608 56.192 56.192 0 0 0-49.824-39.232l-97.92-6.656-36.576-91.072C283.55392 13.312 263.04192 0 239.39392 0c-23.616 0-44.16 13.376-52.288 33.92L150.52992 125.12l-98.304 6.624a55.68 55.68 0 0 0-49.28 38.624 56.288 56.288 0 0 0 17.376 61.184l75.328 62.912-24.096 95.552a56.8 56.8 0 0 0 21.376 59.2c18.08 13.28 42.528 15.04 63.456 2.304l83.072-52.352 83.456 52.48c19.136 11.872 46.08 10.304 62.496-2.08a56 56 0 0 0 20.8-28.32c166.976 167.84 253.632 523.04 254.592 527.04a32 32 0 0 0 55.104 13.792c25.568-28.896 40.128-77.344 48.416-120.576l110.624 168.096a32 32 0 0 0 58.464-13.44c12.352-94.72 4.8-178.336-5.696-237.92l44.576 34.944a32 32 0 0 0 50.784-32.96c-4.096-16.32-102.304-387.36-570.208-523.84z m441.152 414.08a32 32 0 0 0-49.792 36.16c0.384 1.056 31.104 86.624 31.552 207.808l-106.144-161.248a32.032 32.032 0 0 0-58.72 16.288 571.68 571.68 0 0 1-12.704 95.488c-45.248-145.856-152.64-429.664-327.872-533.12a32 32 0 0 0-46.176 38.944l13.056 34.24-80.736-50.752a32.032 32.032 0 0 0-34.112 0L138.27392 387.296l24.384-96.672a32.032 32.032 0 0 0-10.528-32.416L75.55392 194.304l99.328-6.72a31.936 31.936 0 0 0 27.52-20l37.056-92.256L276.51392 167.584c4.576 11.392 15.264 19.168 27.52 20l99.808 6.752-38.24 33.824a32 32 0 0 0 13.92 55.136C464.19392 275.264 614.27392 463.488 679.71392 584.512l-21.664-16.96z"/>
+                        </svg>
+                    </div>
+                    <h3>欢迎使用 Star RAG</h3>
+                    <p>基于 RAG 的智能问答助手</p>
                 </div>
                 
                 <!-- Messages -->
@@ -368,7 +376,7 @@
                         @compositionstart="handleCompositionStart"
                         @compositionend="handleCompositionEnd"
                         @input="autoResize"
-                        placeholder="和喵喵说点什么吧... (Shift+Enter 换行)" 
+                        placeholder="输入消息... (Shift+Enter 换行)" 
                         rows="1"
                         ref="textarea"
                     ></textarea>

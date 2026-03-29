@@ -1,4 +1,4 @@
-# SuperMew 项目说明
+# Star RAG 项目说明
 
 Agent的项目记录，方便后续持续更新与展示。
 
@@ -62,7 +62,7 @@ REDIS_URL=redis://127.0.0.1:6379/0
 
 # ===== Auth =====
 JWT_SECRET_KEY=replace-with-strong-random-secret
-ADMIN_INVITE_CODE=supermew-admin-2026
+ADMIN_INVITE_CODE=starrag-admin-2026
 JWT_ALGORITHM=HS256
 JWT_EXPIRE_MINUTES=1440
 PASSWORD_PBKDF2_ROUNDS=310000

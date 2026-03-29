@@ -15,5 +15,9 @@ volumes/
 
 # OS files
 .DS_Store
+nul
+
+# Log files
+*.log
 data/
 *.qwen/
