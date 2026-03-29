@@ -21,3 +21,6 @@ nul
 *.log
 data/
 *.qwen/
+*.json
+login.json
+upload.json

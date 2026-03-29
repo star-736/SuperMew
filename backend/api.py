@@ -22,6 +22,8 @@ from schemas import (
     ChatRequest,
     ChatResponse,
     CurrentUserResponse,
+    DocumentBatchDeleteRequest,
+    DocumentBatchDeleteResponse,
     DocumentDeleteResponse,
     DocumentInfo,
     DocumentListResponse,
@@ -352,3 +354,40 @@ async def delete_document(filename: str, _: User = Depends(require_admin)):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除文档失败: {str(e)}")
+
+
+@router.delete("/documents/batch", response_model=DocumentBatchDeleteResponse)
+async def batch_delete_documents(request: DocumentBatchDeleteRequest, _: User = Depends(require_admin)):
+    """批量删除文档（管理员）"""
+    if not request.filenames:
+        raise HTTPException(status_code=400, detail="文件名列表不能为空")
+
+    results = []
+    total_chunks = 0
+
+    for filename in request.filenames:
+        try:
+            milvus_manager.init_collection()
+            delete_expr = f'filename == "{filename}"'
+            result = milvus_manager.delete(delete_expr)
+            parent_chunk_store.delete_by_filename(filename)
+
+            chunks = result.get("delete_count", 0) if isinstance(result, dict) else 0
+            total_chunks += chunks
+            results.append(DocumentDeleteResponse(
+                filename=filename,
+                chunks_deleted=chunks,
+                message=f"成功删除 {filename}",
+            ))
+        except Exception as e:
+            results.append(DocumentDeleteResponse(
+                filename=filename,
+                chunks_deleted=0,
+                message=f"删除失败: {str(e)}",
+            ))
+
+    return DocumentBatchDeleteResponse(
+        results=results,
+        total_deleted=len([r for r in results if r.chunks_deleted > 0]),
+        total_chunks_deleted=total_chunks,
+    )

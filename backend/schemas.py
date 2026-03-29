@@ -127,6 +127,16 @@ class DocumentDeleteResponse(BaseModel):
     message: str
 
 
+class DocumentBatchDeleteRequest(BaseModel):
+    filenames: list[str]
+
+
+class DocumentBatchDeleteResponse(BaseModel):
+    results: list[DocumentDeleteResponse]
+    total_deleted: int
+    total_chunks_deleted: int
+
+
 class UploadTaskCreateResponse(BaseModel):
     task_id: str
     filename: str
