@@ -30,56 +30,71 @@ class MilvusManager:
         if dense_dim is None:
             dense_dim = int(os.getenv("EMBEDDING_DIM", "2560"))
         client = self._get_client()
-        if not client.has_collection(self.collection_name):
-            schema = client.create_schema(auto_id=True, enable_dynamic_field=True)
-            
-            # 主键
-            schema.add_field("id", DataType.INT64, is_primary=True, auto_id=True)
-            
-            # 密集向量（来自 embedding 模型）
-            schema.add_field("dense_embedding", DataType.FLOAT_VECTOR, dim=dense_dim)
-            
-            # 稀疏向量（来自 BM25）
-            schema.add_field("sparse_embedding", DataType.SPARSE_FLOAT_VECTOR)
-            
-            # 文本和元数据字段
-            schema.add_field("text", DataType.VARCHAR, max_length=2000)
-            schema.add_field("filename", DataType.VARCHAR, max_length=255)
-            schema.add_field("file_type", DataType.VARCHAR, max_length=50)
-            schema.add_field("file_path", DataType.VARCHAR, max_length=1024)
-            schema.add_field("page_number", DataType.INT64)
-            schema.add_field("chunk_idx", DataType.INT64)
+        
+        if client.has_collection(self.collection_name):
+            try:
+                schema = client.describe_collection(self.collection_name)
+                fields = schema.get("fields", [])
+                for field in fields:
+                    if field.get("name") == "dense_embedding":
+                        existing_dim = field.get("params", {}).get("dim")
+                        if existing_dim and existing_dim != dense_dim:
+                            print(f"[Milvus] 向量维度不匹配 (现有 {existing_dim} != 配置 {dense_dim})，正在重建 Collection...")
+                            client.drop_collection(self.collection_name)
+                            break
+                        return
+            except Exception:
+                pass
+        
+        schema = client.create_schema(auto_id=True, enable_dynamic_field=True)
+        
+        # 主键
+        schema.add_field("id", DataType.INT64, is_primary=True, auto_id=True)
+        
+        # 密集向量（来自 embedding 模型）
+        schema.add_field("dense_embedding", DataType.FLOAT_VECTOR, dim=dense_dim)
+        
+        # 稀疏向量（来自 BM25）
+        schema.add_field("sparse_embedding", DataType.SPARSE_FLOAT_VECTOR)
+        
+        # 文本和元数据字段
+        schema.add_field("text", DataType.VARCHAR, max_length=2000)
+        schema.add_field("filename", DataType.VARCHAR, max_length=255)
+        schema.add_field("file_type", DataType.VARCHAR, max_length=50)
+        schema.add_field("file_path", DataType.VARCHAR, max_length=1024)
+        schema.add_field("page_number", DataType.INT64)
+        schema.add_field("chunk_idx", DataType.INT64)
 
-            # Auto-merging 所需层级字段
-            schema.add_field("chunk_id", DataType.VARCHAR, max_length=512)
-            schema.add_field("parent_chunk_id", DataType.VARCHAR, max_length=512)
-            schema.add_field("root_chunk_id", DataType.VARCHAR, max_length=512)
-            schema.add_field("chunk_level", DataType.INT64)
+        # Auto-merging 所需层级字段
+        schema.add_field("chunk_id", DataType.VARCHAR, max_length=512)
+        schema.add_field("parent_chunk_id", DataType.VARCHAR, max_length=512)
+        schema.add_field("root_chunk_id", DataType.VARCHAR, max_length=512)
+        schema.add_field("chunk_level", DataType.INT64)
 
-            # 为两种向量分别创建索引
-            index_params = client.prepare_index_params()
-            
-            # 密集向量索引 - 使用 HNSW（更适合混合检索）
-            index_params.add_index(
-                field_name="dense_embedding",
-                index_type="HNSW",
-                metric_type="IP",
-                params={"M": 16, "efConstruction": 256}
-            )
-            
-            # 稀疏向量索引
-            index_params.add_index(
-                field_name="sparse_embedding",
-                index_type="SPARSE_INVERTED_INDEX",
-                metric_type="IP",
-                params={"drop_ratio_build": 0.2}
-            )
+        # 为两种向量分别创建索引
+        index_params = client.prepare_index_params()
+        
+        # 密集向量索引 - 使用 HNSW（更适合混合检索）
+        index_params.add_index(
+            field_name="dense_embedding",
+            index_type="HNSW",
+            metric_type="IP",
+            params={"M": 16, "efConstruction": 256}
+        )
+        
+        # 稀疏向量索引
+        index_params.add_index(
+            field_name="sparse_embedding",
+            index_type="SPARSE_INVERTED_INDEX",
+            metric_type="IP",
+            params={"drop_ratio_build": 0.2}
+        )
 
-            client.create_collection(
-                collection_name=self.collection_name,
-                schema=schema,
-                index_params=index_params
-            )
+        client.create_collection(
+            collection_name=self.collection_name,
+            schema=schema,
+            index_params=index_params
+        )
 
     def insert(self, data: list[dict]):
         """插入数据到 Milvus"""

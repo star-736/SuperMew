@@ -24,3 +24,4 @@ data/
 *.json
 login.json
 upload.json
+docs/
