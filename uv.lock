@@ -3769,6 +3769,7 @@ dependencies = [
     { name = "tabulate" },
     { name = "unstructured" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -3808,6 +3809,7 @@ requires-dist = [
     { name = "tabulate" },
     { name = "unstructured" },
     { name = "uvicorn", specifier = ">=0.30.0" },
+    { name = "websockets", specifier = ">=16.0" },
 ]
 provides-extras = ["study"]
 

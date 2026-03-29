@@ -18,6 +18,7 @@ createApp({
             isUploading: false,
             uploadProgress: '',
             currentTaskId: null,
+            currentWs: null,
             token: localStorage.getItem('accessToken') || '',
             currentUser: null,
             authMode: 'login',
@@ -450,9 +451,9 @@ createApp({
 
                 const data = await response.json();
                 this.currentTaskId = data.task_id;
-                this.uploadProgress = data.message + ' 0%';
+                this.uploadProgress = data.message;
 
-                this.pollUploadTask();
+                this.connectTaskWebSocket(data.task_id);
 
             } catch (error) {
                 this.uploadProgress = '上传失败：' + error.message;
@@ -460,16 +461,22 @@ createApp({
             }
         },
 
-        async pollUploadTask() {
-            if (!this.currentTaskId) return;
+        connectTaskWebSocket(taskId) {
+            if (this.currentWs) {
+                this.currentWs.close();
+            }
 
-            try {
-                const response = await this.authFetch(`/documents/tasks/${this.currentTaskId}`);
-                if (!response.ok) {
-                    throw new Error('Failed to fetch task status');
-                }
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/documents/${taskId}`;
 
-                const task = await response.json();
+            this.currentWs = new WebSocket(wsUrl);
+
+            this.currentWs.onopen = () => {
+                console.log('WebSocket connected');
+            };
+
+            this.currentWs.onmessage = (event) => {
+                const task = JSON.parse(event.data);
                 this.uploadProgress = task.message + ' ' + task.progress + '%';
 
                 if (task.status === 'completed') {
@@ -478,23 +485,30 @@ createApp({
                     if (this.$refs.fileInput) {
                         this.$refs.fileInput.value = '';
                     }
-                    await this.loadDocuments();
+                    this.loadDocuments();
                     setTimeout(() => {
                         this.uploadProgress = '';
                     }, 3000);
                     this.currentTaskId = null;
+                    this.currentWs.close();
+                    this.currentWs = null;
                     this.isUploading = false;
                 } else if (task.status === 'failed') {
                     this.uploadProgress = '处理失败：' + (task.error || task.message);
                     this.currentTaskId = null;
+                    this.currentWs.close();
+                    this.currentWs = null;
                     this.isUploading = false;
-                } else {
-                    setTimeout(() => this.pollUploadTask(), 1000);
                 }
-            } catch (error) {
-                console.error('Poll task error:', error);
-                setTimeout(() => this.pollUploadTask(), 2000);
-            }
+            };
+
+            this.currentWs.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            this.currentWs.onclose = () => {
+                console.log('WebSocket closed');
+            };
         },
 
         async deleteDocument(filename) {

@@ -3,8 +3,9 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -51,6 +52,36 @@ embedding_service = EmbeddingService()
 milvus_writer = MilvusWriter(embedding_service=embedding_service, milvus_manager=milvus_manager)
 
 router = APIRouter()
+
+
+class WebSocketManager:
+    def __init__(self):
+        self.active_connections: dict[str, list[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, task_id: str):
+        await websocket.accept()
+        if task_id not in self.active_connections:
+            self.active_connections[task_id] = []
+        self.active_connections[task_id].append(websocket)
+
+        def send_update(task_data: dict[str, Any]):
+            try:
+                asyncio.create_task(websocket.send_json(task_data))
+            except Exception:
+                pass
+
+        task_manager.register_callback(task_id, send_update)
+
+    def disconnect(self, websocket: WebSocket, task_id: str):
+        if task_id in self.active_connections:
+            if websocket in self.active_connections[task_id]:
+                self.active_connections[task_id].remove(websocket)
+            if not self.active_connections[task_id]:
+                del self.active_connections[task_id]
+        task_manager.unregister_callback(task_id)
+
+
+ws_manager = WebSocketManager()
 
 
 @router.post("/auth/register", response_model=AuthResponse)
@@ -391,3 +422,15 @@ async def batch_delete_documents(request: DocumentBatchDeleteRequest, _: User = 
         total_deleted=len([r for r in results if r.chunks_deleted > 0]),
         total_chunks_deleted=total_chunks,
     )
+
+
+@router.websocket("/ws/documents/{task_id}")
+async def websocket_task_progress(websocket: WebSocket, task_id: str):
+    await ws_manager.connect(websocket, task_id)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket, task_id)
+    except Exception:
+        ws_manager.disconnect(websocket, task_id)

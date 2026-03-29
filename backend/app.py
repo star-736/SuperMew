@@ -39,7 +39,6 @@ def create_app() -> FastAPI:
 
     app.include_router(api_module.router)
 
-    # serve frontend static files at root
     if FRONTEND_DIR.exists():
         app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
 
