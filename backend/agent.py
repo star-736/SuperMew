@@ -5,7 +5,7 @@ import asyncio
 from langchain.chat_models import init_chat_model
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, SystemMessage
-from tools import get_current_weather, search_knowledge_base, get_last_rag_context, reset_tool_call_guards, set_rag_step_queue
+from tools import get_current_weather, search_knowledge_base, get_last_rag_context, reset_tool_call_guards, set_rag_step_queue, set_max_search_turns
 from datetime import datetime
 from cache import cache
 from database import SessionLocal
@@ -221,16 +221,16 @@ def create_agent_instance():
         model=model,
         tools=[get_current_weather, search_knowledge_base],
         system_prompt=(
-            "You are a cute cat bot that loves to help users. "
-            "When responding, you may use tools to assist. "
-            "Use search_knowledge_base when users ask document/knowledge questions. "
-            "Do not call the same tool repeatedly in one turn. At most one knowledge tool call per turn. "
-            "Once you call search_knowledge_base and receive its result, you MUST immediately produce the Final Answer based on that result. "
-            "After receiving search_knowledge_base result, you MUST NOT call any tool again (including get_current_weather or search_knowledge_base). "
-            "If the retrieved context is insufficient, answer honestly that you don't know instead of making up facts. "
-            "If tool results include a Step-back Question/Answer, use that general principle to reason and answer, "
-            "but do not reveal chain-of-thought. "
-            "If you don't know the answer, admit it honestly."
+            "You are an expert AI assistant specialized in retrieving and answering questions using a knowledge base.\n\n"
+            "Guidelines:\n"
+            "- Always prioritize using search_knowledge_base when users ask about documents or factual knowledge\n"
+            "- You may call search_knowledge_base up to 3 times per turn if initial retrieval results are insufficient\n"
+            "- If the retrieved context doesn't fully answer the question, try reformulating the query and searching again\n"
+            "- Use the retrieved information to provide accurate, factual answers\n"
+            "- If the knowledge base doesn't contain relevant information, honestly state that you don't know\n"
+            "- Do not make up facts or provide information not found in the retrieved context\n"
+            "- You may also use get_current_weather for weather-related queries\n"
+            "- Be concise and direct in your answers"
         ),
     )
     return agent, model
@@ -262,6 +262,10 @@ def chat_with_agent(user_text: str, user_id: str = "default_user", session_id: s
     """使用 Agent 处理用户消息并返回响应"""
     messages = storage.load(user_id, session_id)
 
+    # 设置 Agent Loop 最大搜索次数
+    max_search_turns = int(os.getenv("MAX_SEARCH_TURNS", "3"))
+    set_max_search_turns(max_search_turns)
+
     # 清理可能残留的 RAG 上下文，避免跨请求污染
     get_last_rag_context(clear=True)
     reset_tool_call_guards()
@@ -276,7 +280,7 @@ def chat_with_agent(user_text: str, user_id: str = "default_user", session_id: s
     messages.append(HumanMessage(content=user_text))
     result = agent.invoke(
         {"messages": messages},
-        config={"recursion_limit": 8},
+        config={"recursion_limit": 10},
     )
 
     response_content = ""
@@ -315,6 +319,10 @@ async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", 
     """
     messages = storage.load(user_id, session_id)
 
+    # 设置 Agent Loop 最大搜索次数
+    max_search_turns = int(os.getenv("MAX_SEARCH_TURNS", "3"))
+    set_max_search_turns(max_search_turns)
+
     # 清理可能残留的 RAG 上下文
     get_last_rag_context(clear=True)
     reset_tool_call_guards()
@@ -346,7 +354,7 @@ async def chat_with_agent_stream(user_text: str, user_id: str = "default_user", 
             async for msg, metadata in agent.astream(
                 {"messages": messages},
                 stream_mode="messages",
-                config={"recursion_limit": 8},
+                config={"recursion_limit": 10},
             ):
                 if not isinstance(msg, AIMessageChunk):
                     continue

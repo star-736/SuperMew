@@ -14,6 +14,7 @@ AMAP_API_KEY = os.getenv("AMAP_API_KEY")
 
 _LAST_RAG_CONTEXT = None
 _KNOWLEDGE_TOOL_CALLS_THIS_TURN = 0
+_MAX_SEARCH_TURNS = 3  # 默认值，会被 agent.py 动态设置
 _RAG_STEP_QUEUE = None  # asyncio.Queue, set by agent before streaming
 _RAG_STEP_LOOP = None   # asyncio loop, captured when setting queue
 
@@ -36,6 +37,17 @@ def reset_tool_call_guards():
     """每轮对话开始时重置工具调用计数。"""
     global _KNOWLEDGE_TOOL_CALLS_THIS_TURN
     _KNOWLEDGE_TOOL_CALLS_THIS_TURN = 0
+
+
+def set_max_search_turns(max_turns: int):
+    """设置最大搜索次数。"""
+    global _MAX_SEARCH_TURNS
+    _MAX_SEARCH_TURNS = max_turns
+
+
+def get_max_search_turns() -> int:
+    """获取最大搜索次数。"""
+    return _MAX_SEARCH_TURNS
 
 
 def set_rag_step_queue(queue):
@@ -128,11 +140,10 @@ def get_current_weather(location: str, extensions: Optional[str] = "base") -> st
 @tool("search_knowledge_base")
 def search_knowledge_base(query: str) -> str:
     """Search for information in the knowledge base using hybrid retrieval (dense + sparse vectors)."""
-    # ... guards omitted ...
-    global _KNOWLEDGE_TOOL_CALLS_THIS_TURN
-    if _KNOWLEDGE_TOOL_CALLS_THIS_TURN >= 1:
+    global _KNOWLEDGE_TOOL_CALLS_THIS_TURN, _MAX_SEARCH_TURNS
+    if _KNOWLEDGE_TOOL_CALLS_THIS_TURN >= _MAX_SEARCH_TURNS:
         return (
-            "TOOL_CALL_LIMIT_REACHED: search_knowledge_base has already been called once in this turn. "
+            f"TOOL_CALL_LIMIT_REACHED: search_knowledge_base has been called {_MAX_SEARCH_TURNS} times in this turn. "
             "Use the existing retrieval result and provide the final answer directly."
         )
     _KNOWLEDGE_TOOL_CALLS_THIS_TURN += 1
