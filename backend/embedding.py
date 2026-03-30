@@ -6,6 +6,8 @@ import requests
 from collections import Counter
 from dotenv import load_dotenv
 
+import jieba
+
 load_dotenv()
 
 
@@ -56,35 +58,22 @@ class EmbeddingService:
 
     def tokenize(self, text: str) -> list[str]:
         """
-        简单分词器 - 支持中英文混合
+        分词器 - 使用 jieba 精确分词
         :param text: 输入文本
         :return: 分词结果
         """
-        # 中文按字符分割，英文按空格和标点分割
-        # 移除标点和特殊字符
         text = text.lower()
         
         tokens = []
-        # 匹配中文字符
-        chinese_pattern = re.compile(r'[\u4e00-\u9fff]')
-        # 匹配英文单词
-        english_pattern = re.compile(r'[a-zA-Z]+')
+        raw_tokens = jieba.lcut(text)
         
-        i = 0
-        while i < len(text):
-            char = text[i]
-            if chinese_pattern.match(char):
-                # 中文字符单独作为一个 token
-                tokens.append(char)
-                i += 1
-            elif english_pattern.match(char):
-                # 英文单词
-                match = english_pattern.match(text[i:])
-                if match:
-                    tokens.append(match.group())
-                    i += len(match.group())
-            else:
-                i += 1
+        for token in raw_tokens:
+            token = token.strip()
+            if not token:
+                continue
+            if re.fullmatch(r'[\s\W]+', token, re.UNICODE):
+                continue
+            tokens.append(token)
         
         return tokens
 
