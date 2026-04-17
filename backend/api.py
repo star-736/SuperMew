@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from agent import chat_with_agent, chat_with_agent_stream, storage
 from auth import authenticate_user, create_access_token, get_current_user, get_db, get_password_hash, require_admin, resolve_role
 from document_loader import DocumentLoader
-from embedding import EmbeddingService
+from embedding import EmbeddingService, embedding_service
 from excel_store import ExcelKnowledgeStore
 from milvus_client import MilvusManager
 from milvus_writer import MilvusWriter
@@ -50,10 +50,19 @@ loader = DocumentLoader()
 parent_chunk_store = ParentChunkStore()
 excel_store = ExcelKnowledgeStore()
 milvus_manager = MilvusManager()
-embedding_service = EmbeddingService()
 milvus_writer = MilvusWriter(embedding_service=embedding_service, milvus_manager=milvus_manager)
 
 router = APIRouter()
+
+
+def _remove_bm25_stats_for_filename(filename: str) -> None:
+    """删除 Milvus 中该文件对应 chunk 前，先从持久化 BM25 统计中扣减。"""
+    rows = milvus_manager.query_all(
+        filter_expr=f'filename == "{filename}"',
+        output_fields=["text"],
+    )
+    texts = [r.get("text") or "" for r in rows]
+    embedding_service.increment_remove_documents(texts)
 
 
 class WebSocketManager:
@@ -252,6 +261,10 @@ def _process_document_upload(file_path: str, filename: str, task_id: str):
     task_manager.update_progress(task_id, 15, "清理旧数据...")
     delete_expr = f'filename == "{filename}"'
     try:
+        _remove_bm25_stats_for_filename(filename)
+    except Exception:
+        pass
+    try:
         milvus_manager.delete(delete_expr)
     except Exception:
         pass
@@ -412,6 +425,7 @@ async def delete_document(filename: str, _: User = Depends(require_admin)):
         milvus_manager.init_collection()
 
         delete_expr = f'filename == "{filename}"'
+        _remove_bm25_stats_for_filename(filename)
         result = milvus_manager.delete(delete_expr)
         parent_chunk_store.delete_by_filename(filename)
         excel_store.delete_by_filename(filename)
@@ -438,6 +452,7 @@ async def batch_delete_documents(request: DocumentBatchDeleteRequest, _: User = 
         try:
             milvus_manager.init_collection()
             delete_expr = f'filename == "{filename}"'
+            _remove_bm25_stats_for_filename(filename)
             result = milvus_manager.delete(delete_expr)
             parent_chunk_store.delete_by_filename(filename)
             excel_store.delete_by_filename(filename)

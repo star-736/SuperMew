@@ -6,7 +6,7 @@ import requests
 from dotenv import load_dotenv
 
 from milvus_client import MilvusManager
-from embedding import EmbeddingService
+from embedding import EmbeddingService, embedding_service as _embedding_service
 from excel_store import ExcelKnowledgeStore
 from parent_chunk_store import ParentChunkStore
 from langchain.chat_models import init_chat_model
@@ -24,7 +24,6 @@ AUTO_MERGE_THRESHOLD = int(os.getenv("AUTO_MERGE_THRESHOLD", "2"))
 LEAF_RETRIEVE_LEVEL = int(os.getenv("LEAF_RETRIEVE_LEVEL", "3"))
 
 # 全局初始化检索依赖，避免反复构造
-_embedding_service = EmbeddingService()
 _milvus_manager = MilvusManager()
 _parent_chunk_store = ParentChunkStore()
 _excel_store = ExcelKnowledgeStore()
