@@ -1,4 +1,5 @@
 from typing import Literal, TypedDict, List, Optional
+import json
 import os
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
@@ -95,6 +96,18 @@ def _format_docs(docs: List[dict]) -> str:
     for i, doc in enumerate(docs, 1):
         source = doc.get("filename", "Unknown")
         page = doc.get("page_number", "N/A")
+        if doc.get("file_type") == "Excel" and doc.get("record_type") == "excel_row":
+            sheet_name = doc.get("sheet_name", "UnknownSheet")
+            row_index = doc.get("row_index", "N/A")
+            row_obj = doc.get("row_obj", {})
+            # 只给结构化 JSON，去掉冗余的 text
+            structured = json.dumps(row_obj, ensure_ascii=False) if row_obj else "{}"
+            chunks.append(f"[{i}] {source} / {sheet_name} / Row {row_index}:\n{structured}")
+            continue
+        if doc.get("file_type") == "Excel" and doc.get("record_type") == "excel_sheet":
+            sheet_name = doc.get("sheet_name", "UnknownSheet")
+            chunks.append(f"[{i}] {source} / {sheet_name} (Sheet Summary):\n{doc.get('text', '')}")
+            continue
         text = doc.get("text", "")
         chunks.append(f"[{i}] {source} (Page {page}):\n{text}")
     return "\n\n---\n\n".join(chunks)
@@ -140,6 +153,8 @@ def retrieve_initial(state: RAGState) -> RAGState:
         "rerank_error": retrieve_meta.get("rerank_error"),
         "retrieval_mode": retrieve_meta.get("retrieval_mode"),
         "candidate_k": retrieve_meta.get("candidate_k"),
+        "document_candidate_count": retrieve_meta.get("document_candidate_count"),
+        "excel_candidate_count": retrieve_meta.get("excel_candidate_count"),
         "leaf_retrieve_level": retrieve_meta.get("leaf_retrieve_level"),
         "auto_merge_enabled": retrieve_meta.get("auto_merge_enabled"),
         "auto_merge_applied": retrieve_meta.get("auto_merge_applied"),
@@ -253,6 +268,8 @@ def retrieve_expanded(state: RAGState) -> RAGState:
     rerank_errors = []
     retrieval_mode = None
     candidate_k = None
+    document_candidate_count = 0
+    excel_candidate_count = 0
     leaf_retrieve_level = None
     auto_merge_enabled = None
     auto_merge_applied = False
@@ -282,6 +299,8 @@ def retrieve_expanded(state: RAGState) -> RAGState:
             rerank_errors.append(f"hyde:{hyde_meta.get('rerank_error')}")
         retrieval_mode = retrieval_mode or hyde_meta.get("retrieval_mode")
         candidate_k = candidate_k or hyde_meta.get("candidate_k")
+        document_candidate_count += int(hyde_meta.get("document_candidate_count") or 0)
+        excel_candidate_count += int(hyde_meta.get("excel_candidate_count") or 0)
         leaf_retrieve_level = leaf_retrieve_level or hyde_meta.get("leaf_retrieve_level")
         auto_merge_enabled = auto_merge_enabled if auto_merge_enabled is not None else hyde_meta.get("auto_merge_enabled")
         auto_merge_applied = auto_merge_applied or bool(hyde_meta.get("auto_merge_applied"))
@@ -311,6 +330,8 @@ def retrieve_expanded(state: RAGState) -> RAGState:
             rerank_errors.append(f"step_back:{step_meta.get('rerank_error')}")
         retrieval_mode = retrieval_mode or step_meta.get("retrieval_mode")
         candidate_k = candidate_k or step_meta.get("candidate_k")
+        document_candidate_count += int(step_meta.get("document_candidate_count") or 0)
+        excel_candidate_count += int(step_meta.get("excel_candidate_count") or 0)
         leaf_retrieve_level = leaf_retrieve_level or step_meta.get("leaf_retrieve_level")
         auto_merge_enabled = auto_merge_enabled if auto_merge_enabled is not None else step_meta.get("auto_merge_enabled")
         auto_merge_applied = auto_merge_applied or bool(step_meta.get("auto_merge_applied"))
@@ -351,6 +372,8 @@ def retrieve_expanded(state: RAGState) -> RAGState:
         "rerank_error": "; ".join(rerank_errors) if rerank_errors else None,
         "retrieval_mode": retrieval_mode,
         "candidate_k": candidate_k,
+        "document_candidate_count": document_candidate_count,
+        "excel_candidate_count": excel_candidate_count,
         "leaf_retrieve_level": leaf_retrieve_level,
         "auto_merge_enabled": auto_merge_enabled,
         "auto_merge_applied": auto_merge_applied,
@@ -369,17 +392,9 @@ def build_rag_graph():
     graph.add_node("retrieve_expanded", retrieve_expanded)
 
     graph.set_entry_point("retrieve_initial")
-    graph.add_edge("retrieve_initial", "grade_documents")
-    graph.add_conditional_edges(
-        "grade_documents",
-        lambda state: state.get("route"),
-        {
-            "generate_answer": END,
-            "rewrite_question": "rewrite_question",
-        },
-    )
-    graph.add_edge("rewrite_question", "retrieve_expanded")
-    graph.add_edge("retrieve_expanded", END)
+    # 跳过 grade_documents，直接返回给 Agent 自主决策
+    # 如需启用，改为: graph.add_edge("retrieve_initial", "grade_documents")
+    graph.add_edge("retrieve_initial", END)
     return graph.compile()
 
 

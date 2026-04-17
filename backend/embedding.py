@@ -103,12 +103,13 @@ class EmbeddingService:
 
     def get_sparse_embedding(self, text: str) -> dict:
         """
-        生成 BM25 稀疏向量
+        生成标准 BM25 稀疏向量
+        - 文档入库时：只存 TF（词频）
+        - 查询时：用 get_sparse_query_weight() 生成 BM25 权重向量
         :param text: 输入文本
         :return: 稀疏向量 {index: value, ...}
         """
         tokens = self.tokenize(text)
-        doc_len = len(tokens)
         tf = Counter(tokens)
         
         sparse_vector = {}
@@ -121,23 +122,48 @@ class EmbeddingService:
             
             idx = self._vocab[token]
             
+            # 文档入库只存 TF（词频）
+            if freq > 0:
+                sparse_vector[idx] = float(freq)
+        
+        return sparse_vector
+
+    def get_sparse_query_weight(self, text: str) -> dict:
+        """
+        生成查询的 BM25 权重向量
+        - 只用于查询，文档入库用 get_sparse_embedding()
+        - 计算: TF × IDF × 归一化
+        :param text: 查询文本
+        :return: BM25 权重向量 {index: value, ...}
+        """
+        tokens = self.tokenize(text)
+        doc_len = len(tokens)
+        tf = Counter(tokens)
+        
+        weight_vector = {}
+        
+        for token, freq in tf.items():
+            if token not in self._vocab:
+                continue
+            
+            idx = self._vocab[token]
+            
             # 计算 IDF
             df = self._doc_freq.get(token, 0)
             if df == 0:
-                # 新词，使用平滑 IDF
                 idf = math.log((self._total_docs + 1) / 1)
             else:
                 idf = math.log((self._total_docs - df + 0.5) / (df + 0.5) + 1)
             
-            # 计算 BM25 分数
+            # BM25 权重 = TF × IDF × 归一化
             numerator = freq * (self.k1 + 1)
             denominator = freq + self.k1 * (1 - self.b + self.b * doc_len / max(self._avg_doc_len, 1))
-            score = idf * numerator / denominator
+            weight = idf * numerator / denominator
             
-            if score > 0:
-                sparse_vector[idx] = float(score)
+            if weight > 0:
+                weight_vector[idx] = float(weight)
         
-        return sparse_vector
+        return weight_vector
 
     def get_sparse_embeddings(self, texts: list[str]) -> list[dict]:
         """

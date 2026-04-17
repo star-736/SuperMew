@@ -78,7 +78,7 @@ class MilvusManager:
         index_params.add_index(
             field_name="dense_embedding",
             index_type="HNSW",
-            metric_type="IP",
+            metric_type="COSINE",
             params={"M": 16, "efConstruction": 256}
         )
         
@@ -86,7 +86,7 @@ class MilvusManager:
         index_params.add_index(
             field_name="sparse_embedding",
             index_type="SPARSE_INVERTED_INDEX",
-            metric_type="IP",
+            metric_type="COSINE",
             params={"drop_ratio_build": 0.2}
         )
 
@@ -128,6 +128,9 @@ class MilvusManager:
                 "root_chunk_id",
                 "chunk_level",
                 "chunk_idx",
+                "record_type",
+                "sheet_name",
+                "row_index",
             ],
             limit=len(ids),
         )
@@ -159,6 +162,9 @@ class MilvusManager:
             "root_chunk_id",
             "chunk_level",
             "chunk_idx",
+            "record_type",
+            "sheet_name",
+            "row_index",
         ]
         
         # 密集向量搜索请求
@@ -205,6 +211,9 @@ class MilvusManager:
                     "root_chunk_id": hit.get("root_chunk_id", ""),
                     "chunk_level": hit.get("chunk_level", 0),
                     "chunk_idx": hit.get("chunk_idx", 0),
+                    "record_type": hit.get("record_type", ""),
+                    "sheet_name": hit.get("sheet_name", ""),
+                    "row_index": hit.get("row_index", 0),
                     "score": hit.get("distance", 0.0)
                 })
         
@@ -230,6 +239,9 @@ class MilvusManager:
                 "root_chunk_id",
                 "chunk_level",
                 "chunk_idx",
+                "record_type",
+                "sheet_name",
+                "row_index",
             ],
             filter=filter_expr,
         )
@@ -248,6 +260,9 @@ class MilvusManager:
                     "root_chunk_id": hit.get("entity", {}).get("root_chunk_id", ""),
                     "chunk_level": hit.get("entity", {}).get("chunk_level", 0),
                     "chunk_idx": hit.get("entity", {}).get("chunk_idx", 0),
+                    "record_type": hit.get("entity", {}).get("record_type", ""),
+                    "sheet_name": hit.get("entity", {}).get("sheet_name", ""),
+                    "row_index": hit.get("entity", {}).get("row_index", 0),
                     "score": hit.get("distance", 0.0)
                 })
         

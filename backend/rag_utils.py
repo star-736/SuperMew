@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from milvus_client import MilvusManager
 from embedding import EmbeddingService
+from excel_store import ExcelKnowledgeStore
 from parent_chunk_store import ParentChunkStore
 from langchain.chat_models import init_chat_model
 
@@ -26,6 +27,7 @@ LEAF_RETRIEVE_LEVEL = int(os.getenv("LEAF_RETRIEVE_LEVEL", "3"))
 _embedding_service = EmbeddingService()
 _milvus_manager = MilvusManager()
 _parent_chunk_store = ParentChunkStore()
+_excel_store = ExcelKnowledgeStore()
 
 _stepback_model = None
 
@@ -104,6 +106,55 @@ def _auto_merge_documents(docs: List[dict], top_k: int) -> Tuple[List[dict], Dic
         "auto_merge_replaced_chunks": replaced_count,
         "auto_merge_steps": int(merged_count_l3_l2 > 0) + int(merged_count_l2_l1 > 0),
     }
+
+
+def _enrich_excel_docs(docs: List[dict]) -> List[dict]:
+    row_ids = [doc.get("chunk_id", "") for doc in docs if doc.get("file_type") == "Excel" and doc.get("record_type") == "excel_row"]
+    sheet_ids = [doc.get("chunk_id", "") for doc in docs if doc.get("file_type") == "Excel" and doc.get("record_type") == "excel_sheet"]
+    row_map = {item["chunk_id"]: item for item in _excel_store.get_rows_by_chunk_ids(row_ids)}
+    sheet_map = {item["chunk_id"]: item for item in _excel_store.get_sheets_by_chunk_ids(sheet_ids)}
+
+    enriched = []
+    for doc in docs:
+        if doc.get("file_type") != "Excel":
+            enriched.append(doc)
+            continue
+        merged = dict(doc)
+        if merged.get("record_type") == "excel_row":
+            detail = row_map.get(merged.get("chunk_id", ""), {})
+            merged["sheet_name"] = detail.get("sheet_name", merged.get("sheet_name", ""))
+            merged["row_index"] = detail.get("row_index", merged.get("row_index", 0))
+            merged["row_obj"] = detail.get("row_obj", {})
+            merged["headers"] = detail.get("headers", [])
+        elif merged.get("record_type") == "excel_sheet":
+            detail = sheet_map.get(merged.get("chunk_id", ""), {})
+            merged["sheet_name"] = detail.get("sheet_name", merged.get("sheet_name", ""))
+            merged["headers"] = detail.get("headers", [])
+            merged["sheet_html"] = detail.get("sheet_html", "")
+            merged["row_count"] = detail.get("row_count", 0)
+        enriched.append(merged)
+    return enriched
+
+
+def _search_candidates(query: str, top_k: int, filter_expr: str) -> tuple[list[dict], str]:
+    dense_embeddings = _embedding_service.get_embeddings([query])
+    dense_embedding = dense_embeddings[0]
+    try:
+        sparse_embedding = _embedding_service.get_sparse_query_weight(query)
+        results = _milvus_manager.hybrid_retrieve(
+            dense_embedding=dense_embedding,
+            sparse_embedding=sparse_embedding,
+            top_k=top_k,
+            filter_expr=filter_expr,
+        )
+        return results, "hybrid"
+    except Exception:
+        results = _milvus_manager.dense_retrieve(
+            dense_embedding=dense_embedding,
+            top_k=top_k,
+            filter_expr=filter_expr,
+        )
+        return results, "dense_fallback"
 
 
 def _rerank_documents(query: str, docs: List[dict], top_k: int) -> Tuple[List[dict], Dict[str, Any]]:
@@ -245,39 +296,49 @@ def step_back_expand(query: str) -> dict:
 
 def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
     candidate_k = max(top_k * 3, top_k)
-    filter_expr = f"chunk_level == {LEAF_RETRIEVE_LEVEL}"
     try:
-        dense_embeddings = _embedding_service.get_embeddings([query])
-        dense_embedding = dense_embeddings[0]
-        sparse_embedding = _embedding_service.get_sparse_embedding(query)
-
-        retrieved = _milvus_manager.hybrid_retrieve(
-            dense_embedding=dense_embedding,
-            sparse_embedding=sparse_embedding,
+        document_hits, document_mode = _search_candidates(
+            query=query,
             top_k=candidate_k,
-            filter_expr=filter_expr,
+            filter_expr=f"chunk_level == {LEAF_RETRIEVE_LEVEL}",
         )
-        reranked, rerank_meta = _rerank_documents(query=query, docs=retrieved, top_k=top_k)
+        excel_hits, excel_mode = _search_candidates(
+            query=query,
+            top_k=max(top_k * 2, top_k),
+            filter_expr='file_type == "Excel" and chunk_level in [0, -1]',
+        )
+        combined = sorted(document_hits + excel_hits, key=lambda item: item.get("score", 0.0), reverse=True)
+        reranked, rerank_meta = _rerank_documents(query=query, docs=combined, top_k=top_k)
         merged_docs, merge_meta = _auto_merge_documents(docs=reranked, top_k=top_k)
-        rerank_meta["retrieval_mode"] = "hybrid"
+        merged_docs = _enrich_excel_docs(merged_docs)
+        rerank_meta["retrieval_mode"] = f"docs:{document_mode}+excel:{excel_mode}"
         rerank_meta["candidate_k"] = candidate_k
         rerank_meta["leaf_retrieve_level"] = LEAF_RETRIEVE_LEVEL
+        rerank_meta["document_candidate_count"] = len(document_hits)
+        rerank_meta["excel_candidate_count"] = len(excel_hits)
         rerank_meta.update(merge_meta)
         return {"docs": merged_docs, "meta": rerank_meta}
     except Exception:
         try:
-            dense_embeddings = _embedding_service.get_embeddings([query])
-            dense_embedding = dense_embeddings[0]
-            retrieved = _milvus_manager.dense_retrieve(
-                dense_embedding=dense_embedding,
+            document_hits, _ = _search_candidates(
+                query=query,
                 top_k=candidate_k,
-                filter_expr=filter_expr,
+                filter_expr=f"chunk_level == {LEAF_RETRIEVE_LEVEL}",
             )
-            reranked, rerank_meta = _rerank_documents(query=query, docs=retrieved, top_k=top_k)
+            excel_hits, _ = _search_candidates(
+                query=query,
+                top_k=max(top_k * 2, top_k),
+                filter_expr='file_type == "Excel" and chunk_level in [0, -1]',
+            )
+            combined = sorted(document_hits + excel_hits, key=lambda item: item.get("score", 0.0), reverse=True)
+            reranked, rerank_meta = _rerank_documents(query=query, docs=combined, top_k=top_k)
             merged_docs, merge_meta = _auto_merge_documents(docs=reranked, top_k=top_k)
-            rerank_meta["retrieval_mode"] = "dense_fallback"
+            merged_docs = _enrich_excel_docs(merged_docs)
+            rerank_meta["retrieval_mode"] = "retry_combined"
             rerank_meta["candidate_k"] = candidate_k
             rerank_meta["leaf_retrieve_level"] = LEAF_RETRIEVE_LEVEL
+            rerank_meta["document_candidate_count"] = len(document_hits)
+            rerank_meta["excel_candidate_count"] = len(excel_hits)
             rerank_meta.update(merge_meta)
             return {"docs": merged_docs, "meta": rerank_meta}
         except Exception:
@@ -291,6 +352,8 @@ def retrieve_documents(query: str, top_k: int = 5) -> Dict[str, Any]:
                     "rerank_error": "retrieve_failed",
                     "retrieval_mode": "failed",
                     "candidate_k": candidate_k,
+                    "document_candidate_count": 0,
+                    "excel_candidate_count": 0,
                     "leaf_retrieve_level": LEAF_RETRIEVE_LEVEL,
                     "auto_merge_enabled": AUTO_MERGE_ENABLED,
                     "auto_merge_applied": False,

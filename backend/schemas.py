@@ -35,6 +35,11 @@ class RetrievedChunk(BaseModel):
     filename: str
     page_number: Optional[str | int] = None
     text: Optional[str] = None
+    file_type: Optional[str] = None
+    record_type: Optional[str] = None
+    sheet_name: Optional[str] = None
+    row_index: Optional[int] = None
+    row_obj: Optional[dict] = None
     score: Optional[float] = None
     rrf_rank: Optional[int] = None
     rerank_score: Optional[float] = None
@@ -62,6 +67,8 @@ class RagTrace(BaseModel):
     rerank_error: Optional[str] = None
     retrieval_mode: Optional[str] = None
     candidate_k: Optional[int] = None
+    document_candidate_count: Optional[int] = None
+    excel_candidate_count: Optional[int] = None
     leaf_retrieve_level: Optional[int] = None
     auto_merge_enabled: Optional[bool] = None
     auto_merge_applied: Optional[bool] = None

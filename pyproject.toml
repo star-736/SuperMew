@@ -32,6 +32,7 @@ dependencies = [
     "python-jose[cryptography]>=3.3.0",
     "websockets>=16.0",
     "jieba>=0.42.1",
+    "networkx>=3.4.2",
 ]
 
 [project.optional-dependencies]

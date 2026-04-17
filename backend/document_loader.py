@@ -1,8 +1,11 @@
 """文档加载和分片服务"""
 import os
-from typing import Dict, List
+from html import escape
+from typing import Dict, List, Any
+
+from openpyxl import load_workbook
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, UnstructuredExcelLoader
+from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 
 
 class DocumentLoader:
@@ -39,6 +42,68 @@ class DocumentLoader:
     @staticmethod
     def _build_chunk_id(filename: str, page_number: int, level: int, index: int) -> str:
         return f"{filename}::p{page_number}::l{level}::{index}"
+
+    @staticmethod
+    def _normalize_excel_value(value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    @staticmethod
+    def _normalize_headers(row_values: List[Any]) -> List[str]:
+        headers: List[str] = []
+        seen: dict[str, int] = {}
+        for idx, value in enumerate(row_values, 1):
+            base = DocumentLoader._normalize_excel_value(value) or f"column_{idx}"
+            count = seen.get(base, 0)
+            seen[base] = count + 1
+            headers.append(base if count == 0 else f"{base}_{count + 1}")
+        return headers
+
+    @staticmethod
+    def _sheet_chunk_id(filename: str, sheet_name: str) -> str:
+        return f"{filename}::sheet::{sheet_name}"
+
+    @staticmethod
+    def _row_chunk_id(filename: str, sheet_name: str, row_index: int) -> str:
+        return f"{filename}::sheet::{sheet_name}::row::{row_index}"
+
+    @staticmethod
+    def _build_row_text(filename: str, sheet_name: str, row_index: int, row_obj: dict[str, str]) -> str:
+        lines = [f"文件: {filename}", f"Sheet: {sheet_name}", f"行号: {row_index}"]
+        for key, value in row_obj.items():
+            lines.append(f"{key}={value}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_sheet_text(filename: str, sheet_name: str, headers: List[str], row_objects: List[dict[str, str]]) -> str:
+        header_text = " | ".join(headers)
+        preview_rows = row_objects[:5]
+        row_lines = []
+        for idx, row in enumerate(preview_rows, 1):
+            joined = " | ".join([f"{key}={value}" for key, value in row.items() if value != ""])
+            row_lines.append(f"示例行{idx}: {joined}")
+        if len(row_objects) > len(preview_rows):
+            row_lines.append(f"其余 {len(row_objects) - len(preview_rows)} 行已省略")
+        return "\n".join([
+            f"文件: {filename}",
+            f"Sheet: {sheet_name}",
+            f"列: {header_text}",
+            f"行数: {len(row_objects)}",
+            *row_lines,
+        ])
+
+    @staticmethod
+    def _build_sheet_html(headers: List[str], row_objects: List[dict[str, str]]) -> str:
+        header_html = "".join([f"<th>{escape(header)}</th>" for header in headers])
+        body_rows = []
+        for row in row_objects:
+            body_rows.append(
+                "<tr>"
+                + "".join([f"<td>{escape(row.get(header, ''))}</td>" for header in headers])
+                + "</tr>"
+            )
+        return f"<table><thead><tr>{header_html}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>"
 
     def _split_page_to_three_levels(
         self,
@@ -117,6 +182,111 @@ class DocumentLoader:
 
         return root_chunks
 
+    def load_excel_workbook(self, file_path: str, filename: str) -> dict[str, list[dict]]:
+        workbook = load_workbook(file_path, data_only=False)
+        sheet_docs: List[dict] = []
+        row_docs: List[dict] = []
+        sheet_records: List[dict] = []
+        row_records: List[dict] = []
+
+        for sheet_index, sheet in enumerate(workbook.worksheets, 1):
+            raw_rows = [list(row) for row in sheet.iter_rows(values_only=True)]
+            header_idx = None
+            for idx, row in enumerate(raw_rows):
+                if any(self._normalize_excel_value(value) for value in row):
+                    header_idx = idx
+                    break
+            if header_idx is None:
+                continue
+
+            headers = self._normalize_headers(raw_rows[header_idx])
+            data_rows = raw_rows[header_idx + 1 :]
+            row_objects: List[dict[str, str]] = []
+
+            for row_offset, row in enumerate(data_rows, header_idx + 2):
+                values = [self._normalize_excel_value(value) for value in row]
+                padded = values + [""] * max(0, len(headers) - len(values))
+                row_obj = {header: padded[idx] if idx < len(padded) else "" for idx, header in enumerate(headers)}
+                if not any(value for value in row_obj.values()):
+                    continue
+                row_objects.append(row_obj)
+
+                row_chunk_id = self._row_chunk_id(filename, sheet.title, row_offset)
+                row_text = self._build_row_text(filename, sheet.title, row_offset, row_obj)
+                row_docs.append(
+                    {
+                        "text": row_text,
+                        "filename": filename,
+                        "file_type": "Excel",
+                        "file_path": file_path,
+                        "page_number": sheet_index,
+                        "chunk_idx": row_offset,
+                        "chunk_id": row_chunk_id,
+                        "parent_chunk_id": self._sheet_chunk_id(filename, sheet.title),
+                        "root_chunk_id": self._sheet_chunk_id(filename, sheet.title),
+                        "chunk_level": 0,
+                        "record_type": "excel_row",
+                        "sheet_name": sheet.title,
+                        "row_index": row_offset,
+                    }
+                )
+                row_records.append(
+                    {
+                        "chunk_id": row_chunk_id,
+                        "filename": filename,
+                        "file_path": file_path,
+                        "sheet_name": sheet.title,
+                        "sheet_index": sheet_index,
+                        "row_index": row_offset,
+                        "row_text": row_text,
+                        "row_obj": row_obj,
+                        "headers": headers,
+                        "sheet_chunk_id": self._sheet_chunk_id(filename, sheet.title),
+                    }
+                )
+
+            sheet_chunk_id = self._sheet_chunk_id(filename, sheet.title)
+            sheet_text = self._build_sheet_text(filename, sheet.title, headers, row_objects)
+            sheet_html = self._build_sheet_html(headers, row_objects)
+            sheet_docs.append(
+                {
+                    "text": sheet_text,
+                    "filename": filename,
+                    "file_type": "Excel",
+                    "file_path": file_path,
+                    "page_number": sheet_index,
+                    "chunk_idx": 0,
+                    "chunk_id": sheet_chunk_id,
+                    "parent_chunk_id": "",
+                    "root_chunk_id": sheet_chunk_id,
+                    "chunk_level": -1,
+                    "record_type": "excel_sheet",
+                    "sheet_name": sheet.title,
+                    "row_index": 0,
+                }
+            )
+            sheet_records.append(
+                {
+                    "chunk_id": sheet_chunk_id,
+                    "filename": filename,
+                    "file_path": file_path,
+                    "sheet_name": sheet.title,
+                    "sheet_index": sheet_index,
+                    "headers": headers,
+                    "sheet_text": sheet_text,
+                    "sheet_html": sheet_html,
+                    "row_count": len(row_objects),
+                    "column_count": len(headers),
+                }
+            )
+
+        return {
+            "sheets": sheet_records,
+            "rows": row_records,
+            "sheet_docs": sheet_docs,
+            "row_docs": row_docs,
+        }
+
     def load_document(self, file_path: str, filename: str) -> list[dict]:
         """
         加载单个文档并分片
@@ -133,8 +303,8 @@ class DocumentLoader:
             doc_type = "Word"
             loader = Docx2txtLoader(file_path)
         elif file_lower.endswith((".xlsx", ".xls")):
-            doc_type = "Excel"
-            loader = UnstructuredExcelLoader(file_path)
+            excel_data = self.load_excel_workbook(file_path, filename)
+            return excel_data.get("row_docs", []) + excel_data.get("sheet_docs", [])
         else:
             raise ValueError(f"不支持的文件类型: {filename}")
 

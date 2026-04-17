@@ -60,3 +60,39 @@ class ParentChunk(Base):
     chunk_level: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     chunk_idx: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ExcelSheet(Base):
+    __tablename__ = "excel_sheets"
+    __table_args__ = (UniqueConstraint("filename", "sheet_name", name="uq_excel_sheet"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    chunk_id: Mapped[str] = mapped_column(String(512), unique=True, index=True, nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    file_path: Mapped[str] = mapped_column(String(1024), default="", nullable=False)
+    sheet_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    sheet_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    headers: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    sheet_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    sheet_html: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    column_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ExcelRow(Base):
+    __tablename__ = "excel_rows"
+    __table_args__ = (UniqueConstraint("filename", "sheet_name", "row_index", name="uq_excel_row"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    chunk_id: Mapped[str] = mapped_column(String(512), unique=True, index=True, nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    file_path: Mapped[str] = mapped_column(String(1024), default="", nullable=False)
+    sheet_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    sheet_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    row_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    row_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    row_obj: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    headers: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    sheet_chunk_id: Mapped[str] = mapped_column(String(512), default="", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

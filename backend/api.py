@@ -13,6 +13,7 @@ from agent import chat_with_agent, chat_with_agent_stream, storage
 from auth import authenticate_user, create_access_token, get_current_user, get_db, get_password_hash, require_admin, resolve_role
 from document_loader import DocumentLoader
 from embedding import EmbeddingService
+from excel_store import ExcelKnowledgeStore
 from milvus_client import MilvusManager
 from milvus_writer import MilvusWriter
 from models import User
@@ -47,6 +48,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024
 
 loader = DocumentLoader()
 parent_chunk_store = ParentChunkStore()
+excel_store = ExcelKnowledgeStore()
 milvus_manager = MilvusManager()
 embedding_service = EmbeddingService()
 milvus_writer = MilvusWriter(embedding_service=embedding_service, milvus_manager=milvus_manager)
@@ -257,27 +259,69 @@ def _process_document_upload(file_path: str, filename: str, task_id: str):
         parent_chunk_store.delete_by_filename(filename)
     except Exception:
         pass
+    try:
+        excel_store.delete_by_filename(filename)
+    except Exception:
+        pass
 
     task_manager.update_progress(task_id, 25, "加载文档并分块...")
-    try:
-        new_docs = loader.load_document(file_path, filename)
-    except Exception as doc_err:
-        raise Exception(f"文档处理失败: {doc_err}")
+    file_lower = filename.lower()
+    if file_lower.endswith((".xlsx", ".xls")):
+        try:
+            workbook = loader.load_excel_workbook(file_path, filename)
+        except Exception as doc_err:
+            raise Exception(f"Excel 处理失败: {doc_err}")
 
-    if not new_docs:
-        raise Exception("文档处理失败，未能提取内容")
+        row_docs = workbook.get("row_docs", [])
+        sheet_docs = workbook.get("sheet_docs", [])
+        if not row_docs and not sheet_docs:
+            raise Exception("Excel 处理失败，未能提取结构化内容")
 
-    task_manager.update_progress(task_id, 50, "文档分块完成，准备向量化...")
-    parent_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) in (1, 2)]
-    leaf_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) == 3]
-    if not leaf_docs:
-        raise Exception("文档处理失败，未生成可检索叶子分块")
+        task_manager.update_progress(task_id, 50, "Excel 结构化解析完成，准备存储...")
+        excel_store.replace_workbook({
+            "filename": filename,
+            "sheets": workbook.get("sheets", []),
+            "rows": workbook.get("rows", []),
+        })
 
-    task_manager.update_progress(task_id, 60, "存储父级分块...")
-    parent_chunk_store.upsert_documents(parent_docs)
+        task_manager.update_progress(task_id, 70, "正在生成向量并写入数据库...")
+        milvus_writer.write_documents(row_docs + sheet_docs)
+        result_payload = {
+            "filename": filename,
+            "chunks_processed": len(row_docs) + len(sheet_docs),
+            "message": (
+                f"成功上传并处理 {filename}，结构化行 {len(row_docs)} 条，"
+                f"Sheet 摘要 {len(sheet_docs)} 条"
+            ),
+        }
+    else:
+        try:
+            new_docs = loader.load_document(file_path, filename)
+        except Exception as doc_err:
+            raise Exception(f"文档处理失败: {doc_err}")
 
-    task_manager.update_progress(task_id, 70, "正在生成向量并写入数据库...")
-    milvus_writer.write_documents(leaf_docs)
+        if not new_docs:
+            raise Exception("文档处理失败，未能提取内容")
+
+        task_manager.update_progress(task_id, 50, "文档分块完成，准备向量化...")
+        parent_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) in (1, 2)]
+        leaf_docs = [doc for doc in new_docs if int(doc.get("chunk_level", 0) or 0) == 3]
+        if not leaf_docs:
+            raise Exception("文档处理失败，未生成可检索叶子分块")
+
+        task_manager.update_progress(task_id, 60, "存储父级分块...")
+        parent_chunk_store.upsert_documents(parent_docs)
+
+        task_manager.update_progress(task_id, 70, "正在生成向量并写入数据库...")
+        milvus_writer.write_documents(leaf_docs)
+        result_payload = {
+            "filename": filename,
+            "chunks_processed": len(leaf_docs),
+            "message": (
+                f"成功上传并处理 {filename}，叶子分块 {len(leaf_docs)} 个，"
+                f"父级分块 {len(parent_docs)} 个"
+            ),
+        }
 
     task_manager.update_progress(task_id, 95, "清理临时文件...")
     try:
@@ -285,14 +329,7 @@ def _process_document_upload(file_path: str, filename: str, task_id: str):
     except Exception:
         pass
 
-    return {
-        "filename": filename,
-        "chunks_processed": len(leaf_docs),
-        "message": (
-            f"成功上传并处理 {filename}，叶子分块 {len(leaf_docs)} 个，"
-            f"父级分块 {len(parent_docs)} 个"
-        ),
-    }
+    return result_payload
 
 
 @router.post("/documents/upload", response_model=UploadTaskCreateResponse)
@@ -377,6 +414,7 @@ async def delete_document(filename: str, _: User = Depends(require_admin)):
         delete_expr = f'filename == "{filename}"'
         result = milvus_manager.delete(delete_expr)
         parent_chunk_store.delete_by_filename(filename)
+        excel_store.delete_by_filename(filename)
 
         return DocumentDeleteResponse(
             filename=filename,
@@ -402,6 +440,7 @@ async def batch_delete_documents(request: DocumentBatchDeleteRequest, _: User = 
             delete_expr = f'filename == "{filename}"'
             result = milvus_manager.delete(delete_expr)
             parent_chunk_store.delete_by_filename(filename)
+            excel_store.delete_by_filename(filename)
 
             chunks = result.get("delete_count", 0) if isinstance(result, dict) else 0
             total_chunks += chunks
