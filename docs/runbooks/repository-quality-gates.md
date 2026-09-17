@@ -6,6 +6,23 @@
 
 ## 本地验证
 
+### 存储测试镜像
+
+开发与生产 Compose 的 MinIO 使用 Quay 上的同一固定 release，并锁定多架构 manifest digest。
+2026-09-17 检查发现原 Docker Hub `minio/minio` 来源返回 `pull access denied`，而同版本
+Quay manifest 可访问；此变更不升级 MinIO、不修改存储卷或认证配置。
+
+若 `storage-compatibility` 在启动依赖时失败，先从仓库根目录检查镜像来源：
+
+```bash
+docker buildx imagetools inspect quay.io/minio/minio:RELEASE.2024-05-28T17-19-04Z
+```
+
+核对返回 digest 与 Compose 一致后，在隔离 CI 环境重新执行存储检查。镜像拉取失败发生在
+Redis/Milvus smoke 之前，不应通过跳过这些 smoke 或取消认证要求来规避。
+
+### Python 检查
+
 先安装锁定依赖：
 
 ```bash
